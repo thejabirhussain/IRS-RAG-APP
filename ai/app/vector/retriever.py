@@ -1,11 +1,11 @@
 """Vector retrieval with filtering and similarity cutoff."""
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import numpy as np
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, QueryRequest
 
 from app.core.config import settings
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def retrieve(
     client: QdrantClient,
     collection: str,
-    query_vec: np.ndarray,
+    query_vec: Union[list[float], np.ndarray],
     top_k: int = 40,
     cutoff: float = 0.22,
     filters: Optional[dict[str, Any]] = None,
@@ -38,10 +38,16 @@ def retrieve(
             if conditions:
                 query_filter = Filter(must=conditions)
 
-        # Search
-        hits = client.search(
+        # Convert to list if numpy array
+        if isinstance(query_vec, np.ndarray):
+            query_vector = query_vec.tolist()
+        else:
+            query_vector = query_vec
+
+        # Use query_points instead of search (new API in 1.16+)
+        hits = client.query_points(
             collection_name=collection,
-            query_vector=query_vec.tolist(),
+            query=query_vector,
             limit=top_k,
             with_payload=True,
             query_filter=query_filter,
@@ -50,12 +56,15 @@ def retrieve(
 
         # Convert to list of dicts
         results = []
-        for hit in hits:
-            payload = hit.payload or {}
+        # In new API, hits might be a QueryResponse object
+        points = hits.points if hasattr(hits, 'points') else hits
+        
+        for point in points:
+            payload = point.payload or {}
             results.append(
                 {
-                    "id": hit.id,
-                    "score": hit.score,
+                    "id": point.id,
+                    "score": point.score,
                     "url": payload.get("url", ""),
                     "title": payload.get("title", ""),
                     "section_heading": payload.get("section_heading"),
@@ -73,14 +82,14 @@ def retrieve(
         return results
 
     except Exception as e:
-        logger.error(f"Error retrieving chunks: {e}")
+        logger.error(f"Error retrieving chunks: {e}", exc_info=True)
         return []
 
 
 def retrieve_with_cutoff(
     client: QdrantClient,
     collection: str,
-    query_vec: np.ndarray,
+    query_vec: Union[list[float], np.ndarray],
     top_k: int = None,
     cutoff: float = None,
     filters: Optional[dict[str, Any]] = None,
@@ -90,6 +99,8 @@ def retrieve_with_cutoff(
         top_k = settings.top_k
     if cutoff is None:
         cutoff = settings.similarity_cutoff
+
+    return retrieve(client, collection, query_vec, top_k=top_k, cutoff=cutoff, filters=filters)
 
     # First retrieve more candidates
     candidates = retrieve(client, collection, query_vec, top_k=top_k * 2, cutoff=0.0, filters=filters)
@@ -101,5 +112,3 @@ def retrieve_with_cutoff(
     filtered = filtered[:top_k]
 
     return filtered
-
-

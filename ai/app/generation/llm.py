@@ -76,6 +76,7 @@ class OllamaLLMProvider(LLMProvider):
                     "options": {
                         "temperature": kwargs.get("temperature", 0.0),
                         "num_predict": kwargs.get("max_tokens", 500),
+                        #"num_ctx": 2048,  # Add this line
                     },
                 },
             )
