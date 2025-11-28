@@ -255,3 +255,4 @@ class RAGPipeline:
 def get_rag_pipeline() -> RAGPipeline:
     """Get optimized RAG pipeline instance."""
     return RAGPipeline(use_parallel_reranker=True, enable_caching=True)
+##
