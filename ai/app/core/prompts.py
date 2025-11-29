@@ -1,13 +1,17 @@
 """Prompt templates for RAG generation."""
 
 import orjson
-from typing import Any
+from typing import Any, Optional
 
 from app.core.schemas import VectorChunk
 
 
-def build_rag_prompt(chunks: list[dict[str, Any]], user_query: str) -> str:
-    """Build RAG prompt with context chunks."""
+def build_rag_prompt(
+    chunks: list[dict[str, Any]],
+    user_query: str,
+    history: Optional[list[dict[str, str]]] = None,
+) -> str:
+    """Build RAG prompt with context chunks and optional conversation history."""
     # Format chunks as JSONL
     ctx_lines = []
     for chunk in chunks:
@@ -23,11 +27,24 @@ def build_rag_prompt(chunks: list[dict[str, Any]], user_query: str) -> str:
 
     ctx_block = "\n".join(ctx_lines)
 
+    history_lines = []
+    if history:
+        # Use up to last 6 turns
+        recent = history[-6:]
+        for turn in recent:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            history_lines.append(f"{role}: {content}")
+    history_block = "\n".join(history_lines)
+
     prompt = f"""SYSTEM:
 You are a factual assistant that answers only from the provided IRS.gov knowledge snippets. You must cite sources and never invent facts.
 
 CONTEXT:
 {ctx_block}
+
+HISTORY (most recent first at bottom):
+{history_block}
 
 USER:
 {user_query}

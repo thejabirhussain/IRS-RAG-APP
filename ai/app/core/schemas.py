@@ -6,6 +6,13 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, HttpUrl
 
 
+class ChatMessage(BaseModel):
+    """Single conversation turn."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     """Chat request schema."""
 
@@ -14,6 +21,10 @@ class ChatRequest(BaseModel):
         None, description="Optional filters for retrieval"
     )
     json: bool = Field(False, description="Return JSON response format")
+    history: Optional[list["ChatMessage"]] = Field(
+        default=None,
+        description="Optional prior conversation turns for context-awareness",
+    )
 
 
 class Source(BaseModel):
@@ -36,6 +47,9 @@ class ChatResponse(BaseModel):
     confidence: Literal["low", "medium", "high"]
     query_embedding_similarity: list[float] = Field(
         ..., description="Similarity scores for retrieved chunks"
+    )
+    follow_up_questions: list[str] = Field(
+        default_factory=list, description="Context-aware related follow-up questions"
     )
 
 

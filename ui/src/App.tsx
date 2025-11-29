@@ -17,6 +17,7 @@ interface ChatResponse {
   sources: Source[]
   confidence: 'low' | 'medium' | 'high'
   query_embedding_similarity: number[]
+  follow_up_questions?: string[]
 }
 
 interface Message {
@@ -24,6 +25,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
+  follow_up_questions?: string[]
 }
 
 const SUGGESTION_CHIPS = [
@@ -105,10 +107,14 @@ export function App() {
     ])
 
     try {
+      const historyPayload = [...messages, { role: 'user', content: submittedQuery }].map((m) => ({
+        role: m.role,
+        content: m.content,
+      }))
       const res = await fetch('/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: submittedQuery, json: true }),
+        body: JSON.stringify({ query: submittedQuery, json: true, history: historyPayload }),
       })
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -122,6 +128,7 @@ export function App() {
         query_embedding_similarity: Array.isArray(raw?.query_embedding_similarity)
           ? raw.query_embedding_similarity
           : [],
+        follow_up_questions: Array.isArray(raw?.follow_up_questions) ? raw.follow_up_questions : [],
       }
 
       if (!normalized.answer_text) {
@@ -136,6 +143,7 @@ export function App() {
           role: 'assistant',
           content: normalized.answer_text,
           sources: normalized.sources,
+          follow_up_questions: normalized.follow_up_questions || [],
         },
       ])
     } catch (e: any) {
@@ -254,29 +262,9 @@ export function App() {
                       </div>
                       {m.sources && m.sources.length > 0 && (
                         <div className="space-y-5">
-                          <div>
-                            <h3 className="font-semibold text-gray-900 text-base mb-3">IRS Sources</h3>
-                            <div className="flex flex-wrap gap-2.5">
-                              {m.sources.map((source, index) => (
-                                <a
-                                  key={index}
-                                  href={source.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 rounded-full text-xs font-medium hover:from-blue-100 hover:to-indigo-100 transition-all duration-200 border border-blue-200/50 hover:border-blue-300 hover:shadow-md group"
-                                >
-                                  <span className="max-w-[200px] truncate">{source.title}</span>
-                                  <svg className="w-3.5 h-3.5 ml-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                  </svg>
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Referenced IRS Content (expandable) */}
+                          {/* Sources (single section) */}
                           <div className="space-y-2.5">
-                            <h4 className="text-sm font-semibold text-gray-800">Referenced IRS Content</h4>
+                            <h4 className="text-sm font-semibold text-gray-800">Sources</h4>
                             {m.sources.map((source, index) => {
                               const key = `${m.id}-${index}`
                               const expanded = expandedSources.has(key)
@@ -291,7 +279,16 @@ export function App() {
                                   >
                                     <div className="flex-1 min-w-0 pr-3">
                                       <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-gray-950">
-                                        {source.title}
+                                        <a
+                                          href={source.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => e.stopPropagation()}
+                                          title={source.title}
+                                          className="underline-offset-2 hover:underline"
+                                        >
+                                          {source.title}
+                                        </a>
                                         {source.section && (
                                           <span className="text-gray-500 font-normal ml-2">— {source.section}</span>
                                         )}
@@ -308,30 +305,62 @@ export function App() {
                                     </svg>
                                   </button>
                                   {expanded && (
-                                    <div className="px-5 py-4 bg-white border-t border-gray-200">
-                                      <p className="text-sm text-gray-700 mb-3 whitespace-pre-wrap leading-relaxed">
+                                    <div className="px-5 pb-4 pt-0 border-t border-gray-200 bg-white">
+                                      <p className="text-sm text-gray-700 leading-relaxed">
                                         {source.snippet}
                                       </p>
-                                      <div className="flex items-center gap-5 text-xs text-gray-500 mb-3 pb-3 border-b border-gray-100">
-                                        <span className="font-medium">Characters: {source.char_start}–{source.char_end}</span>
-                                        <span className="font-medium">Relevance: {(source.score * 100).toFixed(1)}%</span>
+                                      <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                                        <div className="flex gap-3">
+                                          <span className="font-medium">Characters: {source.char_start}–{source.char_end}</span>
+                                          <span className="font-medium">Relevance: {(source.score * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <a
+                                          href={source.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors group/link"
+                                        >
+                                          View source on IRS.gov
+                                          <svg className="w-4 h-4 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                          </svg>
+                                        </a>
                                       </div>
-                                      <a
-                                        href={source.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors group/link"
-                                      >
-                                        View source on IRS.gov
-                                        <svg className="w-4 h-4 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                        </svg>
-                                      </a>
                                     </div>
                                   )}
                                 </div>
                               )
                             })}
+                          </div>
+                        </div>
+                      )}
+                      {m.follow_up_questions && m.follow_up_questions.length > 0 && (
+                        <div className="pt-1">
+                          <h4 className="text-sm font-semibold text-gray-800 mb-2">Related questions</h4>
+                          <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-3 md:p-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {m.follow_up_questions.map((q, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => handleSubmit(q)}
+                                  title={q}
+                                  className="group w-full px-3.5 py-2 text-sm rounded-xl border border-gray-200/80 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 shadow-sm hover:shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-gray-300 flex items-center justify-between gap-2"
+                                >
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-50 text-gray-600 border border-gray-200">
+                                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <circle cx="11" cy="11" r="7" strokeWidth="2" />
+                                        <path d="M21 21l-4.35-4.35" strokeWidth="2" strokeLinecap="round" />
+                                      </svg>
+                                    </span>
+                                    <span className="truncate text-left">{q}</span>
+                                  </span>
+                                  <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                                  </svg>
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )}

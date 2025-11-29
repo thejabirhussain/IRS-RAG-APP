@@ -38,6 +38,7 @@ class RAGPipeline:
         top_k: Optional[int] = None,
         top_n: Optional[int] = None,
         cutoff: Optional[float] = None,
+        history: Optional[list[dict[str, str]]] = None,
     ) -> dict[str, Any]:
         """Answer a query using RAG pipeline."""
         try:
@@ -83,7 +84,7 @@ class RAGPipeline:
                 chunks = chunks[:top_n]
 
             # Step 4: Build prompt
-            prompt = build_rag_prompt(chunks, query)
+            prompt = build_rag_prompt(chunks, query, history=history)
 
             # Step 5: Generate answer
             system_prompt = (
@@ -127,11 +128,38 @@ class RAGPipeline:
             else:
                 confidence = "low"
 
+            # Step 9: Generate follow-up questions (lightweight prompt)
+            follow_up_questions: list[str] = []
+            try:
+                fu_prompt = (
+                    "Given the user's question and the assistant's answer, suggest 3-5 short, "
+                    "clickable follow-up questions that are directly relevant. Keep each under 80 characters. "
+                    "Return as a JSON array of strings only.\n\n"
+                    f"Question: {query}\n\nAnswer: {answer_text}\n"
+                )
+                fu_text = self.llm_provider.generate(
+                    prompt=fu_prompt,
+                    system_prompt=(
+                        "You generate helpful, on-topic follow-up questions. Respond ONLY with a JSON array."
+                    ),
+                    temperature=0.2,
+                    max_tokens=128,
+                )
+                # Simple JSON-safe parsing without adding deps
+                import json
+
+                parsed = json.loads(fu_text.strip())
+                if isinstance(parsed, list):
+                    follow_up_questions = [str(x) for x in parsed if isinstance(x, str)][:5]
+            except Exception:
+                follow_up_questions = []
+
             return {
                 "answer_text": answer_text,
                 "sources": sources,
                 "confidence": confidence,
                 "query_embedding_similarity": similarities,
+                "follow_up_questions": follow_up_questions,
                 "response_level": policy.level,
                 "response_policy": {"max_tokens": policy.max_tokens, "top_n": policy.top_n},
                 "classification_type": cls.get("type"),
@@ -145,6 +173,7 @@ class RAGPipeline:
                 "sources": [],
                 "confidence": "low",
                 "query_embedding_similarity": [],
+                "follow_up_questions": [],
                 "response_level": "simple",
                 "response_policy": {"max_tokens": 250, "top_n": 2},
             }

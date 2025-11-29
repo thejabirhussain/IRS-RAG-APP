@@ -30,6 +30,7 @@ async def chat(
         result = rag_pipeline.answer(
             query=request.query,
             filters=request.filters,
+            history=[{"role": m.role, "content": m.content} for m in (request.history or [])],
         )
 
         # Format sources
@@ -52,6 +53,7 @@ async def chat(
             sources=sources,
             confidence=result["confidence"],
             query_embedding_similarity=result.get("query_embedding_similarity", []),
+            follow_up_questions=result.get("follow_up_questions", []),
         )
 
         # Log response
