@@ -91,6 +91,75 @@ export function App() {
     }
   }
 
+  // Helpers to cleanly format source labels and canonical URLs
+  function canonicalizeUrl(u: string): string {
+    try {
+      const url = new URL(u)
+      return `${url.origin}${url.pathname}`
+    } catch {
+      return u
+    }
+  }
+
+  function slugToTitleCase(slug: string): string {
+    return slug
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+  }
+
+  function extractPublicationFromUrl(u: string): string | null {
+    try {
+      const path = new URL(u).pathname.toLowerCase()
+      const m1 = path.match(/\/publications\/p(\d+)/i)
+      if (m1) return `Publication ${m1[1]}`
+      const m2 = path.match(/\/pub\/(?:irs-pdf\/)?p(\d+)/i)
+      if (m2) return `Publication ${m2[1]}`
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  function deriveTitleFromUrl(u: string): string {
+    try {
+      const url = new URL(u)
+      const seg = url.pathname.split('/').filter(Boolean).pop() || ''
+      const pub = extractPublicationFromUrl(u)
+      if (pub) return pub
+      if (!seg) return url.hostname
+      return slugToTitleCase(decodeURIComponent(seg))
+    } catch {
+      return u
+    }
+  }
+
+  function cleanSourceLabel(source: Source): string {
+    // Hard overrides for known publications regardless of incoming title
+    const path = (() => {
+      try { return new URL(source.url).pathname.toLowerCase() } catch { return '' }
+    })()
+    if (/\/p505(\b|\/|#|\?|$)/.test(path) || /\/publications\/p505/.test(path)) {
+      return 'Publication 505 — Tax Withholding and Estimated Tax'
+    }
+    if (/\/p575(\b|\/|#|\?|$)/.test(path) || /\/publications\/p575/.test(path)) {
+      return 'Publication 575 — Pension and Annuity Income'
+    }
+    if (/\/p926(\b|\/|#|\?|$)/.test(path) || /\/publications\/p926/.test(path)) {
+      return 'Publication 926 — Household Employer’s Tax Guide'
+    }
+    const pub = extractPublicationFromUrl(source.url)
+    let t = (source.title || '').replace(/\s+/g, ' ').trim()
+    // Remove noisy trailing excerpt markers or quotes artifacts
+    t = t.replace(/\s+—\s*excerpt:.*$/i, '').replace(/\s+-\s*excerpt:.*$/i, '')
+    // If metadata has a clean title, prefer it
+    if (t) return t
+    // Otherwise build from URL
+    if (pub) return pub
+    return deriveTitleFromUrl(source.url)
+  }
+
   async function handleSubmit(submittedQuery: string) {
     if (!submittedQuery.trim()) return
 
@@ -261,77 +330,38 @@ export function App() {
                         </ReactMarkdown>
                       </div>
                       {m.sources && m.sources.length > 0 && (
-                        <div className="space-y-5">
-                          {/* Sources (single section) */}
-                          <div className="space-y-2.5">
-                            <h4 className="text-sm font-semibold text-gray-800">Sources</h4>
-                            {m.sources.map((source, index) => {
-                              const key = `${m.id}-${index}`
-                              const expanded = expandedSources.has(key)
-                              return (
-                                <div
-                                  key={key}
-                                  className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50/50 hover:bg-gray-50 transition-colors duration-200"
-                                >
-                                  <button
-                                    onClick={() => toggleSource(key)}
-                                    className="w-full px-5 py-3.5 hover:bg-gray-50/80 transition-colors flex items-center justify-between text-left group"
-                                  >
-                                    <div className="flex-1 min-w-0 pr-3">
-                                      <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-gray-950">
-                                        <a
-                                          href={source.url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          onClick={(e) => e.stopPropagation()}
-                                          title={source.title}
-                                          className="underline-offset-2 hover:underline"
-                                        >
-                                          {source.title}
-                                        </a>
-                                        {source.section && (
-                                          <span className="text-gray-500 font-normal ml-2">— {source.section}</span>
-                                        )}
-                                      </p>
-                                      <p className="text-xs text-gray-500 mt-1.5 font-medium">{safeHost(source.url)}</p>
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-semibold text-gray-800">Sources</h4>
+                          <ul className="space-y-3">
+                            {(() => {
+                              const byUrl = new Map<string, Source>()
+                              for (const s of m.sources) {
+                                const link = canonicalizeUrl(s.url)
+                                if (!byUrl.has(link)) byUrl.set(link, { ...s, url: link })
+                              }
+                              const unique = Array.from(byUrl.values())
+                              return unique.map((source, index) => {
+                                const label = cleanSourceLabel(source)
+                                const link = source.url
+                                return (
+                                  <li key={`${m.id}-${index}`} className="text-sm">
+                                    <div className="leading-snug">
+                                      <a
+                                        href={link}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="font-semibold text-blue-700 hover:text-blue-800 underline-offset-2 hover:underline"
+                                        title={label}
+                                      >
+                                        {label}
+                                      </a>
                                     </div>
-                                    <svg
-                                      className={`w-5 h-5 text-gray-400 ml-2 flex-shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180 text-gray-600' : 'group-hover:text-gray-500'}`}
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                    </svg>
-                                  </button>
-                                  {expanded && (
-                                    <div className="px-5 pb-4 pt-0 border-t border-gray-200 bg-white">
-                                      <p className="text-sm text-gray-700 leading-relaxed">
-                                        {source.snippet}
-                                      </p>
-                                      <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                                        <div className="flex gap-3">
-                                          <span className="font-medium">Characters: {source.char_start}–{source.char_end}</span>
-                                          <span className="font-medium">Relevance: {(source.score * 100).toFixed(1)}%</span>
-                                        </div>
-                                        <a
-                                          href={source.url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors group/link"
-                                        >
-                                          View source on IRS.gov
-                                          <svg className="w-4 h-4 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                          </svg>
-                                        </a>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
+                                    <div className="text-xs text-gray-600 mt-0.5 break-all">{link}</div>
+                                  </li>
+                                )
+                              })
+                            })()}
+                          </ul>
                         </div>
                       )}
                       {m.follow_up_questions && m.follow_up_questions.length > 0 && (
@@ -344,18 +374,18 @@ export function App() {
                                   key={i}
                                   onClick={() => handleSubmit(q)}
                                   title={q}
-                                  className="group w-full px-3.5 py-2 text-sm rounded-xl border border-gray-200/80 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 shadow-sm hover:shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-gray-300 flex items-center justify-between gap-2"
+                                  className="group w-full px-3.5 py-2 text-sm rounded-xl border border-gray-200/80 bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 shadow-sm hover:shadow transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-gray-300 flex items-start gap-2 text-left"
                                 >
-                                  <span className="flex items-center gap-2 min-w-0">
-                                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-50 text-gray-600 border border-gray-200">
-                                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                        <circle cx="11" cy="11" r="7" strokeWidth="2" />
-                                        <path d="M21 21l-4.35-4.35" strokeWidth="2" strokeLinecap="round" />
-                                      </svg>
-                                    </span>
-                                    <span className="truncate text-left">{q}</span>
+                                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-50 text-gray-600 border border-gray-200 flex-shrink-0 mt-0.5">
+                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                      <circle cx="11" cy="11" r="7" strokeWidth="2" />
+                                      <path d="M21 21l-4.35-4.35" strokeWidth="2" strokeLinecap="round" />
+                                    </svg>
                                   </span>
-                                  <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                  <span className="flex-1 whitespace-normal break-words leading-snug">
+                                    {q}
+                                  </span>
+                                  <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
                                   </svg>
                                 </button>

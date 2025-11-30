@@ -1,6 +1,7 @@
 """RAG pipeline orchestration."""
 
 import logging
+import re
 from typing import Any, Optional
 
 import numpy as np
@@ -83,10 +84,30 @@ class RAGPipeline:
             else:
                 chunks = chunks[:top_n]
 
-            # Step 4: Build prompt
-            prompt = build_rag_prompt(chunks, query, history=history)
+            # Step 4: Build rolling conversation summary if history is long
+            summary_text: Optional[str] = None
+            if history and len(history) > 6:
+                try:
+                    summary_prompt = (
+                        "Summarize the following chat turns into 3-6 compact bullet points capturing the main topic, entities, forms, and any key parameters. "
+                        "Keep under 1200 characters. Use plain text bullets only.\n\n" +
+                        "\n".join([f"{t.get('role', 'user')}: {t.get('content','')}" for t in history[-12:]])
+                    )
+                    summary_text = self.llm_provider.generate(
+                        prompt=summary_prompt,
+                        system_prompt=(
+                            "You are a careful summarizer. Produce a concise, reference-friendly summary."
+                        ),
+                        temperature=0.0,
+                        max_tokens=200,
+                    )
+                except Exception:
+                    summary_text = None
 
-            # Step 5: Generate answer
+            # Step 5: Build prompt
+            prompt = build_rag_prompt(chunks, query, history=history, summary=summary_text)
+
+            # Step 6: Generate answer
             system_prompt = (
                 "You are a factual assistant that answers only from the provided IRS.gov knowledge snippets. "
                 f"Follow this response style: {policy.style_instruction}"
@@ -98,11 +119,24 @@ class RAGPipeline:
                 max_tokens=policy.max_tokens,
             )
 
-            # Step 6: Add disclaimer if needed
+            # Step 7: Add disclaimer if needed
             if should_add_disclaimer(query):
                 answer_text = f"{settings.legal_disclaimer}\n\n{answer_text}"
 
-            # Step 7: Format sources
+            # Step 7b: Strip any model-inserted Sources section to avoid duplication in UI
+            def _strip_sources_sections(text: str) -> str:
+                patterns = [
+                    r"\n+###\s*Sources[\s\S]*$",
+                    r"\n+##\s*Sources[\s\S]*$",
+                    r"\n+Sources:?[\s\S]*$",
+                ]
+                for p in patterns:
+                    text = re.sub(p, "", text, flags=re.IGNORECASE)
+                return text.strip()
+
+            answer_text = _strip_sources_sections(answer_text)
+
+            # Step 8: Format sources
             sources = []
             similarities = []
             for chunk in chunks:
@@ -119,7 +153,15 @@ class RAGPipeline:
                 )
                 similarities.append(chunk.get("score", 0.0))
 
-            # Step 8: Determine confidence
+            # Deduplicate sources by (url, char range) keeping highest score
+            unique: dict[tuple[str, int, int], dict[str, Any]] = {}
+            for s in sources:
+                key = (s.get("url", ""), int(s.get("char_start", 0)), int(s.get("char_end", 0)))
+                if key not in unique or s.get("score", 0.0) > unique[key].get("score", 0.0):
+                    unique[key] = s
+            sources = list(unique.values())
+
+            # Step 9: Determine confidence
             avg_similarity = np.mean(similarities) if similarities else 0.0
             if avg_similarity >= 0.8:
                 confidence = "high"
@@ -128,7 +170,7 @@ class RAGPipeline:
             else:
                 confidence = "low"
 
-            # Step 9: Generate follow-up questions (lightweight prompt)
+            # Step 10: Generate follow-up questions (lightweight prompt)
             follow_up_questions: list[str] = []
             try:
                 fu_prompt = (

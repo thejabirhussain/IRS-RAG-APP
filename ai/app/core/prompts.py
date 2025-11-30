@@ -10,6 +10,7 @@ def build_rag_prompt(
     chunks: list[dict[str, Any]],
     user_query: str,
     history: Optional[list[dict[str, str]]] = None,
+    summary: Optional[str] = None,
 ) -> str:
     """Build RAG prompt with context chunks and optional conversation history."""
     # Format chunks as JSONL
@@ -29,13 +30,15 @@ def build_rag_prompt(
 
     history_lines = []
     if history:
-        # Use up to last 6 turns
-        recent = history[-6:]
+        # Use up to last 10 turns for better memory
+        recent = history[-10:]
         for turn in recent:
             role = turn.get("role", "user")
             content = turn.get("content", "")
             history_lines.append(f"{role}: {content}")
     history_block = "\n".join(history_lines)
+
+    summary_block = summary or ""
 
     prompt = f"""SYSTEM:
 You are a factual assistant that answers only from the provided IRS.gov knowledge snippets. You must cite sources and never invent facts.
@@ -46,11 +49,14 @@ CONTEXT:
 HISTORY (most recent first at bottom):
 {history_block}
 
+CONVERSATION SUMMARY (if provided):
+{summary_block}
+
 USER:
 {user_query}
 
 ASSISTANT INSTRUCTIONS:
-- Use only the provided context. If it does not support an answer, say: "I don't have verifiable information in the knowledge base for that query." Offer top similar sources with excerpts.
+- Use only the provided context. If it does not support an answer, say: "I don't have verifiable information in the knowledge base for that query." Offer top similar sources with brief excerpts.
 
 - Respond in GitHub-Flavored Markdown (GFM).
 - Begin your answer with a level-3 heading containing the user question exactly:
@@ -58,11 +64,12 @@ ASSISTANT INSTRUCTIONS:
 - Use concise paragraphs and bullet lists for steps and key points.
 - Bold key labels or terms (e.g., **Eligibility**, **Amount**, **Deadline**).
 
-- After the answer, include a section titled "### Sources" with bullet items in this format:
-  - [<page_title>] — <section_heading if available> — <url> — excerpt: "..." (char_start–char_end)
+- Do NOT include a section titled "Sources" in your answer. The application will render sources separately.
 
 - If sources conflict, present both and mark uncertainty.
 - Include relevant IRS form numbers if present in context.
+
+- Use the HISTORY and CONVERSATION SUMMARY to resolve pronouns and references ("this", "that", "it", "they"). If the user continues a topic from earlier turns, carry forward the context naturally.
 
 - If the question asks for legal/tax filing advice, prepend:
 
