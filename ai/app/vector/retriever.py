@@ -38,24 +38,42 @@ def retrieve(
             if conditions:
                 query_filter = Filter(must=conditions)
 
-        # Search
-        hits = client.search(
-            collection_name=collection,
-            query_vector=query_vec.tolist(),
-            limit=top_k,
-            with_payload=True,
-            query_filter=query_filter,
-            score_threshold=cutoff,
-        )
+        # Prepare query vector
+        if isinstance(query_vec, np.ndarray):
+            query_vector = query_vec.tolist()
+        else:
+            query_vector = query_vec
+
+        # Try new query_points API first, fallback to search
+        hits = None
+        try:
+            hits = client.query_points(
+                collection_name=collection,
+                query=query_vector,
+                limit=top_k,
+                with_payload=True,
+                query_filter=query_filter,
+                score_threshold=cutoff,
+            )
+        except Exception:
+            hits = client.search(
+                collection_name=collection,
+                query_vector=query_vector,
+                limit=top_k,
+                with_payload=True,
+                query_filter=query_filter,
+                score_threshold=cutoff,
+            )
 
         # Convert to list of dicts
         results = []
-        for hit in hits:
+        points = hits.points if hasattr(hits, "points") else hits
+        for hit in points:
             payload = hit.payload or {}
             results.append(
                 {
-                    "id": hit.id,
-                    "score": hit.score,
+                    "id": getattr(hit, "id", None),
+                    "score": getattr(hit, "score", None),
                     "url": payload.get("url", ""),
                     "title": payload.get("title", ""),
                     "section_heading": payload.get("section_heading"),

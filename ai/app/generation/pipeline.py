@@ -17,6 +17,7 @@ from app.generation.response_sizer import classify_query, select_response_policy
 from app.vector.embeddings import get_embedding_provider
 from app.vector.qdrant_client import get_client
 from app.vector.reranker import get_reranker
+from app.vector.optimized_reranker import get_parallel_reranker
 from app.vector.retriever import retrieve_with_cutoff
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,12 @@ class RAGPipeline:
         self.llm_provider = get_llm_provider()
         self.qdrant_client = get_client()
         self.reranker = get_reranker()
+        # Optionally wrap reranker with parallel processing for speedup
+        if self.reranker:
+            try:
+                self.reranker = get_parallel_reranker(self.reranker, batch_size=8, max_workers=3)
+            except Exception:
+                pass
         self.collection_name = settings.collection_name
 
     def answer(
